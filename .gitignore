@@ -1,0 +1,4 @@
+*.o
+main
+after.bmp
+doc/TDT4200_assignment3.[^pt]*
