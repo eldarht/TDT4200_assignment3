@@ -8,15 +8,12 @@
 
 void freeBmpData(bmpImage *image) {
 	if (image->data != NULL) {
-		for (unsigned int y = 0; y < image->height; y++) {
-			if (image->data[y] != NULL) {
-				free(image->data[y]);
-				image->data[y] = NULL;
-			}
-
-		}
 		free(image->data);
 		image->data = NULL;
+	}
+	if (image->rawdata != NULL) {
+		free(image->rawdata);
+		image->rawdata = NULL;
 	}
 }
 
@@ -31,16 +28,17 @@ void freeBmpImage(bmpImage *image) {
 int reallocateBmpBuffer(bmpImage *image, unsigned int const width, unsigned int const height) {
 	freeBmpData(image);
 	if (height * width > 0) {
-		image->data = calloc(image->height, sizeof(pixel *));
+		image->rawdata = calloc(image->height * image->width, sizeof(pixel));
+		if (image->rawdata == NULL) {
+			return 1;
+		}
+		image->data = malloc(image->height * sizeof(pixel *));
 		if (image->data == NULL) {
+			freeBmpData(image);
 			return 1;
 		}
 		for (unsigned int i = 0; i < height; i++) {
-			image->data[i] = calloc(width, sizeof(pixel));
-			if (image->data[i] == NULL) {
-				freeBmpData(image);
-				return 1;
-			}
+			image->data[i] = &(image->rawdata[i * width]);
 		}
 	}
 	return 0;
@@ -54,21 +52,19 @@ bmpImage * newBmpImage(unsigned int const width, unsigned int const height) {
 	new->width = width;
 	new->height = height;
 	new->data = NULL;
+	new->rawdata = NULL;
 	reallocateBmpBuffer(new, width, height);
 	return new;
 }
 
 void freeBmpChannelData(bmpImageChannel *image) {
 	if (image->data != NULL) {
-		for (unsigned int y = 0; y < image->height; y++) {
-			if (image->data[y] != NULL) {
-				free(image->data[y]);
-				image->data[y] = NULL;
-			}
-
-		}
 		free(image->data);
 		image->data = NULL;
+	}
+	if (image->rawdata != NULL) {
+		free(image->rawdata);
+		image->rawdata = NULL;
 	}
 }
 
@@ -82,16 +78,17 @@ void freeBmpImageChannel(bmpImageChannel *image) {
 int reallocateBmpChannelBuffer(bmpImageChannel *image, unsigned int const width, unsigned int const height) {
 	freeBmpChannelData(image);
 	if (height * width > 0) {
-		image->data = calloc(image->height, sizeof(unsigned char *));
+		image->rawdata = calloc(image->height * image->width, sizeof(unsigned char));
+		if (image->rawdata == NULL) {
+			return 1;
+		}
+		image->data = malloc(image->height * sizeof(unsigned char *));
 		if (image->data == NULL) {
+			freeBmpChannelData(image);
 			return 1;
 		}
 		for (unsigned int i = 0; i < height; i++) {
-			image->data[i] = calloc(width, sizeof(unsigned char));
-			if (image->data[i] == NULL) {
-				freeBmpChannelData(image);
-				return 1;
-			}
+			image->data[i] = &(image->rawdata[i * width]);
 		}
 	}
 	return 0;
@@ -104,6 +101,7 @@ bmpImageChannel * newBmpImageChannel(unsigned int const width, unsigned int cons
 	new->width = width;
 	new->height = height;
 	new->data = NULL;
+	new->rawdata = NULL;
 	reallocateBmpChannelBuffer(new, width, height);
 	return new;
 }
@@ -125,7 +123,7 @@ int loadBmpImage(bmpImage *image, char const *filename) {
 	image->height = *(int *) &header[22];
 
 	reallocateBmpBuffer(image, image->width, image->height);
-	if (image->data == NULL) {
+	if (image->rawdata == NULL) {
 		goto failed_read;
 	}
 

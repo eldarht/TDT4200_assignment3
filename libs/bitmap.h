@@ -10,12 +10,14 @@ typedef struct {
 typedef struct {
 	unsigned int width;
 	unsigned int height;
+  pixel *rawdata;
 	pixel **data;
 } bmpImage;
 
 typedef struct {
   unsigned int width;
   unsigned int height;
+  unsigned char *rawdata;
   unsigned char **data;
 } bmpImageChannel;
 
