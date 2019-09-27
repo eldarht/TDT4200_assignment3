@@ -87,6 +87,37 @@ void applyKernel(unsigned char **out, unsigned char **in, unsigned int width, un
   }
 }
 
+/**
+ * @brief      Exchanges ghostborder with given rank.
+ *
+ * @param[out] ghostBorder  The ghost border of current rank
+ * @param[in]  wantedBorder The border that other rank want ghosted
+ * @param[in]  size         The size
+ * @param[in]  rankFrom     The current rank sending and recieving
+ * @param[in]  rank         The other rank to change with
+ */
+void exchangeHorizontalBorders(unsigned char *ghostBorder, unsigned char *wantedBorder, int size, int rankFrom, int rankTo){
+  if (rankFrom % 2)
+  {
+    MPI_Send(wantedBorder, size, MPI_UNSIGNED_CHAR,
+      rankTo, 0, MPI_COMM_WORLD
+    );
+
+    MPI_Recv(ghostBorder, size, MPI_UNSIGNED_CHAR,
+      rankTo, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE
+    );
+  }else{
+
+    MPI_Recv(ghostBorder, size, MPI_UNSIGNED_CHAR,
+      rankTo, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE
+    );
+
+    MPI_Send(wantedBorder, size, MPI_UNSIGNED_CHAR,
+      rankTo, 0, MPI_COMM_WORLD
+    );
+  }
+}
+
 
 void help(char const *exec, char const opt, char const *optarg) {
     FILE *out = stdout;
@@ -276,6 +307,10 @@ int main(int argc, char **argv) {
   memcpy(imageChannelBmp->rawdata, channelRawdata, dimensions[worldSize] * dimensions[worldRank] * sizeof(unsigned char));
   free(dimensions); free(channelRawdata);
 
+  // The process should know if it has ghost borders
+  int ghostBefore = worldRank != 0 ? 1:0;
+  int ghostAfter = worldRank != worldSize - 1 ? 1:0;
+
   //Here we do the actual computation!
   // imageChannel->data is a 2-dimensional array of unsigned char which is accessed row first ([y][x])
 
@@ -291,6 +326,25 @@ int main(int argc, char **argv) {
  //               (int *)gaussianKernel, 5, gaussianKernelFactor
                 );
     swapImageChannel(&processImageChannel, &imageChannelBmp);
+    
+    if (ghostAfter)
+    {
+      exchangeHorizontalBorders(&imageChannelBmp->rawdata[(
+          imageChannelBmp->height-ghostAfter)*imageChannelBmp->width
+        ], &imageChannelBmp->rawdata[(
+          imageChannelBmp->height-2*ghostAfter)*imageChannelBmp->width
+        ], imageChannelBmp->width * sizeof(unsigned char), worldRank, worldRank+1
+      ); 
+    }
+
+    if (ghostBefore)
+    {
+      exchangeHorizontalBorders(imageChannelBmp->rawdata, 
+        &imageChannelBmp->rawdata[ghostBefore * imageChannelBmp->width],
+        imageChannelBmp->width * sizeof(unsigned char), worldRank, worldRank-1
+      ); 
+    }
+    
   }
   freeBmpImageChannel(processImageChannel);
 
@@ -304,8 +358,6 @@ int main(int argc, char **argv) {
   }
 
   // Remove border before gather
-  int ghostBefore = worldRank != 0 ? 1:0;
-  int ghostAfter = worldRank != worldSize - 1 ? 1:0;
   int rankSendCount = (imageChannelBmp->height - (ghostBefore + ghostAfter)) * imageChannelBmp->width;
 
   int *recieveCount = NULL;
