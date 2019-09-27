@@ -3,6 +3,7 @@
 #include <string.h>
 #include <getopt.h>
 #include <stdlib.h>
+#include <unistd.h>
 #include <mpi.h>
 
 #include "libs/bitmap.h"
@@ -209,43 +210,76 @@ int main(int argc, char **argv) {
       goto error_exit;
     }
   }
-
-  // To devide the image; all ranks need to know the size image dimensions
-  unsigned int *dimensions = malloc(sizeof(unsigned int)*2);
+  // To divide the image; all ranks need to know the size of what the get
+  unsigned int *dimensions = malloc((worldSize+1) * sizeof(unsigned int));
   if (worldRank == 0)
   {
-    dimensions[0]= imageChannel->width;
-    dimensions[1]= imageChannel->height;
+    for (int i = 0; i < worldSize; ++i)
+    {
+      // Divide image as equaly as possible
+      dimensions[i] = imageChannel->height / worldSize; 
+
+      // Divide the part that could not be done equaly among the first processes
+      if (i < imageChannel->height % worldSize)
+      {
+        dimensions[i]++;
+      }
+      if (i < worldSize-1)  // If ghost border should be after section
+      {
+        dimensions[i]++;
+      }
+
+      if (i > 0)         // If ghost border should be before section
+      {
+        dimensions[i]++;
+      }
+    }
+
+    dimensions[worldSize] = imageChannel->width;  // All can use the same width. Added to the end of the buffer
   }
 
   // Send the dimensions to each rank
-  MPI_Bcast(dimensions, 2, MPI_UNSIGNED,
+  MPI_Bcast(dimensions, worldSize+1, MPI_UNSIGNED,
     0, MPI_COMM_WORLD
   );
   
   // allocate memory for the image section
-  unsigned int rowsPerChunk = dimensions[1] / worldSize;
-  unsigned char *channelRawdata = malloc(sizeof(unsigned char)* rowsPerChunk * dimensions[0]);
+  unsigned char *channelRawdata = malloc(dimensions[worldRank] * dimensions[worldSize] * sizeof(unsigned char));
   if (channelRawdata == NULL)
   {
     printf("Could not allocate memory for image chunk");
     goto error_exit;
   }
 
+  int *sendCount = malloc(worldSize * sizeof(int));
+  int *displacement = malloc(worldSize * sizeof(int));
+  for (int i = 0; i < worldSize; ++i)
+  {
+    sendCount[i] = dimensions[i] * dimensions[worldSize];
+    if (i > 0)  // If not rank 0's offset
+    {
+      // calculate displacement with all previous displacements and size of previouse chunk size minus the ghost borders.
+      displacement[i] = displacement[i-1] + (dimensions[i-1]-2) * dimensions[worldSize];
+    }else{
+      displacement[0] = 0;
+    }
+  }
+    
   // Divide the image
-  MPI_Scatter(imageChannel->rawdata, rowsPerChunk * dimensions[0], MPI_UNSIGNED_CHAR,
-      channelRawdata, rowsPerChunk * dimensions[0], MPI_UNSIGNED_CHAR,
+  MPI_Scatterv(imageChannel->rawdata, sendCount, displacement, MPI_UNSIGNED_CHAR,
+      channelRawdata, dimensions[worldRank] * dimensions[worldSize], MPI_UNSIGNED_CHAR,
       0, MPI_COMM_WORLD
   );
 
   // Create a bmpImageChannel from the imageChunk for computation
-  bmpImageChannel *imageChannelBmp = newBmpImageChannel(dimensions[0], rowsPerChunk);
-  memcpy(imageChannelBmp->rawdata, channelRawdata, dimensions[0] * rowsPerChunk);
+  bmpImageChannel *imageChannelBmp = newBmpImageChannel(dimensions[worldSize], dimensions[worldRank]);
+  memcpy(imageChannelBmp->rawdata, channelRawdata, dimensions[worldSize] * dimensions[worldRank] * sizeof(unsigned char));
   free(dimensions); free(channelRawdata);
 
   //Here we do the actual computation!
   // imageChannel->data is a 2-dimensional array of unsigned char which is accessed row first ([y][x])
-  bmpImageChannel *processImageChannel = newBmpImageChannel(imageChannelBmp->width, rowsPerChunk);
+
+  bmpImageChannel *processImageChannel = newBmpImageChannel(imageChannelBmp->width, imageChannelBmp->height);
   for (unsigned int i = 0; i < iterations; i ++) {
     applyKernel(processImageChannel->data,
                 imageChannelBmp->data,
@@ -260,6 +294,8 @@ int main(int argc, char **argv) {
   }
   freeBmpImageChannel(processImageChannel);
 
+ // printf("(%d/%d) Waiting...\n",worldRank, getpid() );
+ // sleep(10);
   // Create a buffer for the  created image
   unsigned char *resultImageRawdata = NULL; 
   if (worldRank == 0) // Only root needs space to store the actual result
@@ -267,17 +303,48 @@ int main(int argc, char **argv) {
       resultImageRawdata = malloc(imageChannel->width * imageChannel->height * sizeof(unsigned char));
   }
 
+  // Remove border before gather
+  int ghostBefore = worldRank != 0 ? 1:0;
+  int ghostAfter = worldRank != worldSize - 1 ? 1:0;
+  int rankSendCount = (imageChannelBmp->height - (ghostBefore + ghostAfter)) * imageChannelBmp->width;
+
+  int *recieveCount = NULL;
+  if (worldRank == 0)   // Only root need recieveCount and displacement
+  {
+    recieveCount = malloc(worldSize * sizeof(int));
+    memcpy(recieveCount, sendCount, worldSize * sizeof(int));
+    free(sendCount);
+    for (int i = 0; i < worldSize; ++i)
+    {
+      if (i < worldSize -1)  // Remove ghost border after section
+      {
+        recieveCount[i] -= imageChannel->width;
+      }
+
+      if (i > 0)         // If ghost border should be before section
+      {
+        recieveCount[i] -= imageChannel->width;
+        displacement[i] = recieveCount[i-1] + displacement[i-1];
+     
+      }else{
+        displacement[0] = 0;
+      }
+    }
+
+   
+  }
   // Reassemble the image data
-  MPI_Gather(imageChannelBmp->rawdata, imageChannelBmp->height * imageChannelBmp->width, MPI_UNSIGNED_CHAR,
-      resultImageRawdata, imageChannelBmp->height * imageChannelBmp->width, MPI_UNSIGNED_CHAR,
+  MPI_Gatherv(imageChannelBmp->data[ghostBefore], rankSendCount, MPI_UNSIGNED_CHAR,
+      resultImageRawdata, recieveCount, displacement, MPI_UNSIGNED_CHAR,
       0, MPI_COMM_WORLD
   );
+  freeBmpImageChannel(imageChannelBmp); free(recieveCount); free(displacement);
 
   if (worldRank == 0) // Only rank 0 can reasemble the image
   {
     // Create a bmpImageChannel for the result
     bmpImageChannel *imageChannelResult = newBmpImageChannel(image->width, image->height);
-    memcpy(imageChannelResult->rawdata, resultImageRawdata, image->width * image->height);
+    memcpy(imageChannelResult->rawdata, resultImageRawdata, image->width * image->height * sizeof(unsigned char));
     free(resultImageRawdata);
 
     // Map our single color image back to a normal BMP image with 3 color channels
