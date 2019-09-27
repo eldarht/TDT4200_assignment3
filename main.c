@@ -96,7 +96,7 @@ void applyKernel(unsigned char **out, unsigned char **in, unsigned int width, un
  * @param[in]  rankFrom     The current rank sending and recieving
  * @param[in]  rank         The other rank to change with
  */
-void exchangeHorizontalBorders(unsigned char *ghostBorder, unsigned char *wantedBorder, int size, int rankFrom, int rankTo){
+void exchangeVerticalBorders(unsigned char *ghostBorder, unsigned char *wantedBorder, int size, int rankFrom, int rankTo){
   if (rankFrom % 2)
   {
     MPI_Send(wantedBorder, size, MPI_UNSIGNED_CHAR,
@@ -329,7 +329,7 @@ int main(int argc, char **argv) {
     
     if (ghostAfter)
     {
-      exchangeHorizontalBorders(&imageChannelBmp->rawdata[(
+      exchangeVerticalBorders(&imageChannelBmp->rawdata[(
           imageChannelBmp->height-ghostAfter)*imageChannelBmp->width
         ], &imageChannelBmp->rawdata[(
           imageChannelBmp->height-2*ghostAfter)*imageChannelBmp->width
@@ -339,7 +339,7 @@ int main(int argc, char **argv) {
 
     if (ghostBefore)
     {
-      exchangeHorizontalBorders(imageChannelBmp->rawdata, 
+      exchangeVerticalBorders(imageChannelBmp->rawdata, 
         &imageChannelBmp->rawdata[ghostBefore * imageChannelBmp->width],
         imageChannelBmp->width * sizeof(unsigned char), worldRank, worldRank-1
       ); 
