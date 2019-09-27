@@ -14,12 +14,13 @@ The associated source code can be found at \url{https://github.com/eldarht/TDT42
 \subsection*{3}
 The time it took for the application to complete with laplacian1Kernel on average after 5 tries on my computer (Dell LATITUDE E5450) as measured by the time command:
 
-\begin{tabular}{|l|c|}
-	Itterations & Real time \\
+\begin{tabular}{|l|c|c}
+	Itterations & Real time  & scatterv/gatherv (processors: 8)\\
 	\hline
-	1			& 0.253s	\\
-	1024		& 1m 38.798s\\
+	1			& 0.253s	 & 0.743s	\\
+	1024		& 1m 38.798s & 50.176s	\\
 \end{tabular}
 
+The cpu is a Intel(R) Core(TM) i5-5300U CPU @ 2.30GHz with 4 cores and two threads per core(Hyper threaded).
 
 \end{document}
